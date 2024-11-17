@@ -1,6 +1,3 @@
-"use client"
-
-// Inspired by react-hot-toast library
 import * as React from "react"
 
 import type {
@@ -18,39 +15,39 @@ type ToasterToast = ToastProps & {
   action?: ToastActionElement
 }
 
-// Remove the unused actionTypes constant
-// const actionTypes = {
-//   ADD_TOAST: "ADD_TOAST",
-//   UPDATE_TOAST: "UPDATE_TOAST",
-//   DISMISS_TOAST: "DISMISS_TOAST",
-//   REMOVE_TOAST: "REMOVE_TOAST",
-// } as const
+const actionTypes = {
+  ADD_TOAST: "ADD_TOAST",
+  UPDATE_TOAST: "UPDATE_TOAST",
+  DISMISS_TOAST: "DISMISS_TOAST",
+  REMOVE_TOAST: "REMOVE_TOAST",
+} as const
 
 let count = 0
 
 function genId() {
-  count = (count + 1) % Number.MAX_SAFE_INTEGER
+  count = (count + 1) % Number.MAX_VALUE
   return count.toString()
 }
 
+type ActionType = typeof actionTypes
 
 type Action =
   | {
-    type: "ADD_TOAST"
-    toast: ToasterToast
-  }
+      type: ActionType["ADD_TOAST"]
+      toast: ToasterToast
+    }
   | {
-    type: "UPDATE_TOAST"
-    toast: Partial<ToasterToast>
-  }
+      type: ActionType["UPDATE_TOAST"]
+      toast: Partial<ToasterToast>
+    }
   | {
-    type: "DISMISS_TOAST"
-    toastId?: ToasterToast["id"]
-  }
+      type: ActionType["DISMISS_TOAST"]
+      toastId?: ToasterToast["id"]
+    }
   | {
-    type: "REMOVE_TOAST"
-    toastId?: ToasterToast["id"]
-  }
+      type: ActionType["REMOVE_TOAST"]
+      toastId?: ToasterToast["id"]
+    }
 
 interface State {
   toasts: ToasterToast[]
@@ -108,9 +105,9 @@ export const reducer = (state: State, action: Action): State => {
         toasts: state.toasts.map((t) =>
           t.id === toastId || toastId === undefined
             ? {
-              ...t,
-              open: false,
-            }
+                ...t,
+                open: false,
+              }
             : t
         ),
       }
@@ -153,14 +150,15 @@ function toast({ ...props }: Toast) {
   const dismiss = () => dispatch({ type: "DISMISS_TOAST", toastId: id })
 
   dispatch({
-    type: "ADD_TOAST", toast: {
+    type: "ADD_TOAST",
+    toast: {
       ...props,
       id,
       open: true,
       onOpenChange: (open) => {
         if (!open) dismiss()
       },
-    }
+    },
   })
 
   return {
@@ -170,7 +168,7 @@ function toast({ ...props }: Toast) {
   }
 }
 
-function useToast(p0: { title: string; description: string; variant: string }) {
+function useToast() {
   const [state, setState] = React.useState<State>(memoryState)
 
   React.useEffect(() => {
