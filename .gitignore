@@ -37,3 +37,7 @@ next-env.d.ts
 
 # firebase
 firebase-cred.json
+
+# secrets
+.env
+.env.local
