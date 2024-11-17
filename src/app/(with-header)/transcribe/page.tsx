@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
-import { Loader2, Copy } from "lucide-react";
+import { Loader2, Copy, ChevronDown, ChevronUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 
@@ -21,6 +21,7 @@ export default function TranscribePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const { toast } = useToast();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -159,7 +160,14 @@ export default function TranscribePage() {
         {transcript.length > 0 && (
           <div className="mt-6 space-y-4">
             <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">Transcript</h2>
+              <Button 
+                variant="ghost" 
+                onClick={() => setIsCollapsed(!isCollapsed)}
+                className="flex items-center gap-2 p-0 hover:bg-transparent"
+              >
+                <h2 className="text-xl font-semibold">Transcript</h2>
+                {isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+              </Button>
               <Button
                 onClick={copyToClipboard}
                 variant="outline"
@@ -170,21 +178,23 @@ export default function TranscribePage() {
                 <span>Copy</span>
               </Button>
             </div>
-            <div className="bg-muted rounded-lg p-6 space-y-4">
-              {transcript.map((segment, index) => (
-                <div
-                  key={`${segment.start_time}-${index}`}
-                  className="border-b border-border last:border-b-0 pb-4 last:pb-0"
-                >
-                  <div className="text-sm text-muted-foreground">
-                    <span className="mr-4">Start: {segment.start_time.toFixed(3)}s</span>
-                    <span className="mr-4">End: {segment.end_time.toFixed(3)}s</span>
-                    <span className="font-medium">{segment.speaker}</span>
+            {!isCollapsed && (
+              <div className="bg-muted rounded-lg p-6 space-y-4">
+                {transcript.map((segment, index) => (
+                  <div
+                    key={`${segment.start_time}-${index}`}
+                    className="border-b border-border last:border-b-0 pb-4 last:pb-0"
+                  >
+                    <div className="text-sm text-muted-foreground">
+                      <span className="mr-4">Start: {segment.start_time.toFixed(3)}s</span>
+                      <span className="mr-4">End: {segment.end_time.toFixed(3)}s</span>
+                      <span className="font-medium">{segment.speaker}</span>
+                    </div>
+                    <div className="mt-1">{segment.text}</div>
                   </div>
-                  <p className="mt-1">{segment.text}</p>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </Card>

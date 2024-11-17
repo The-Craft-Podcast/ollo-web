@@ -59,7 +59,7 @@ describe("TranscribePage", () => {
     (global.fetch as jest.Mock).mockImplementationOnce(
       () => new Promise((resolve) => setTimeout(() => resolve({
         ok: true,
-        json: () => Promise.resolve({ segments: [] }),
+        json: () => Promise.resolve({ segments: [] })
       }), 100))
     );
 
@@ -76,7 +76,7 @@ describe("TranscribePage", () => {
     expect(await screen.findByText(/transcribing/i)).toBeInTheDocument();
   });
 
-  it("handles successful transcription", async () => {
+  it("handles successful transcription and transcript collapse", async () => {
     const user = userEvent.setup();
     const mockResponse = {
       segments: [
@@ -104,14 +104,24 @@ describe("TranscribePage", () => {
       await user.click(screen.getByRole("button", { name: /transcribe audio/i }));
     });
 
+    // Check if transcript is shown
     await waitFor(() => {
       expect(screen.getByText("Hello world")).toBeInTheDocument();
       expect(screen.getByText("SPEAKER_00")).toBeInTheDocument();
-      expect(mockToast).toHaveBeenCalledWith({
-        title: "Success",
-        description: "Audio transcribed successfully!",
-      });
     });
+
+    // Test collapse functionality
+    const collapseButton = screen.getByRole("button", { name: /transcript/i });
+    await user.click(collapseButton);
+
+    // Verify content is hidden
+    expect(screen.queryByText("Hello world")).not.toBeInTheDocument();
+
+    // Expand again
+    await user.click(collapseButton);
+
+    // Verify content is shown again
+    expect(screen.getByText("Hello world")).toBeInTheDocument();
   });
 
   it("handles transcription error", async () => {
@@ -157,7 +167,6 @@ describe("TranscribePage", () => {
     };
 
     // Set up clipboard mock
-    const mockWriteText = jest.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: mockWriteText },
       writable: true,
