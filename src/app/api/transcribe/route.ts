@@ -13,100 +13,86 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
 });
 
-// Parse the model endpoint into owner/name and version
-const [modelPath, version] = process.env.REPLICATE_ENDPOINT?.split(':') || [];
-const [owner, name] = modelPath?.split('/') || [];
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY = 1000; // 1 second
 
-if (!modelPath || !version || !owner || !name) {
-  throw new Error("Invalid REPLICATE_ENDPOINT format. Expected format: owner/name:version");
+interface ReplicateError extends Error {
+  response?: {
+    status: number;
+    statusText: string;
+  };
 }
 
-const MAX_RETRIES = 3;
-const BACKOFF_FACTOR = 2;
-
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-interface TranscriptSegment {
-  start_time: number;
-  end_time: number;
-  speaker: string;
-  text: string;
+async function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function runReplicateWithRetry(
   replicate: Replicate,
-  audioData: string,
-  maxAttempts = 3
-): Promise<TranscriptSegment[]> {
-  const [modelPath, version] = process.env.REPLICATE_ENDPOINT?.split(':') || [];
-  const [owner, name] = modelPath?.split('/') || [];
+  audioDataUrl: string,
+  retryCount = 0
+): Promise<any> {
+  try {
+    console.log("=== Replicate API Call Attempt", retryCount + 1, "===");
+    console.log("Audio URL format check:", {
+      startsWithData: audioDataUrl.startsWith('data:'),
+      containsBase64: audioDataUrl.includes(';base64,'),
+      totalLength: audioDataUrl.length,
+      preview: audioDataUrl.substring(0, 50) + "..."
+    });
 
-  // Create a data URL from the base64 audio data
-  const dataUrl = `data:audio/mpeg;base64,${audioData}`;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      console.log(`Attempt ${attempt}/${maxAttempts}`);
-      
-      const prediction = await replicate.predictions.create({
-        version: version,
-        input: {
-          audio_file: dataUrl,
-          language_detection_min_prob: 0,
-          language_detection_max_tries: 5,
-          vad_onset: 0.5,
-          vad_offset: 0.363
-        }
-      });
-
-      console.log('Prediction created:', prediction);
-
-      const finalPrediction = await replicate.wait(prediction);
-      console.log('Final prediction:', finalPrediction);
-
-      if (!finalPrediction.output) {
-        throw new Error('No output received from Replicate');
-      }
-
-      // Extract and combine all segment texts
-      const segments = (finalPrediction.output as any).segments || [];
-      const formattedSegments: TranscriptSegment[] = segments.map((segment: any) => ({
-        start_time: segment.start,
-        end_time: segment.end,
-        speaker: segment.speaker || 'SPEAKER_00',
-        text: segment.text.trim()
-      }));
-
-      console.log('Transcription output:', formattedSegments);
-
-      return formattedSegments;
-    } catch (error) {
-      console.error(`Attempt ${attempt}/${maxAttempts} failed:`, error);
-
-      if (attempt === maxAttempts) {
-        throw error;
-      }
-
-      const backoffTime = BACKOFF_FACTOR ** attempt * 1000;
-      console.log(`Waiting ${backoffTime}ms before next attempt...`);
-      await sleep(backoffTime);
+    if (!process.env.REPLICATE_ENDPOINT) {
+      throw new Error("REPLICATE_ENDPOINT is not configured");
     }
-  }
 
-  throw new Error('All retry attempts failed');
+    console.log("Using Replicate model:", process.env.REPLICATE_ENDPOINT);
+
+    const output = await replicate.run(
+      process.env.REPLICATE_ENDPOINT,
+      {
+        input: {
+          audio_file: audioDataUrl,
+          model: "large-v2",
+          transcription: "plain text",
+          translate: false,
+          temperature: 0,
+          suppress_tokens: "-1",
+          condition_on_previous_text: false,
+          compression_ratio_threshold: 2.4,
+          logprob_threshold: -1,
+          no_speech_threshold: 0.6,
+        },
+      }
+    );
+
+    console.log("API call successful! Raw output:", output);
+    return output;
+  } catch (error) {
+    const replicateError = error as ReplicateError;
+    console.error(`Attempt ${retryCount + 1} failed:`, {
+      message: replicateError.message,
+      status: replicateError.response?.status,
+      statusText: replicateError.response?.statusText,
+    });
+
+    if (retryCount < MAX_RETRIES) {
+      const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCount);
+      console.log(`Retrying in ${delay}ms...`);
+      await wait(delay);
+      return runReplicateWithRetry(replicate, audioDataUrl, retryCount + 1);
+    }
+
+    throw replicateError;
+  }
 }
 
 export async function POST(request: NextRequest) {
+  console.log("=== Starting Transcription Request ===");
+  
   if (!process.env.REPLICATE_API_TOKEN) {
+    console.error("Missing REPLICATE_API_TOKEN");
     return NextResponse.json(
       { error: "REPLICATE_API_TOKEN is not configured" },
-      { status: 500 }
-    );
-  }
-
-  if (!process.env.HUGGINGFACE_TOKEN) {
-    return NextResponse.json(
-      { error: "HUGGINGFACE_TOKEN is not configured" },
       { status: 500 }
     );
   }
@@ -117,6 +103,7 @@ export async function POST(request: NextRequest) {
     const file = formData.get("file") as File;
     
     if (!file) {
+      console.error("No file provided in request");
       return NextResponse.json(
         { error: "No file provided" },
         { status: 400 }
@@ -132,34 +119,52 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const base64Audio = buffer.toString("base64");
-    console.log("File converted to base64, length:", base64Audio.length);
+    console.log("Base64 conversion complete:", {
+      originalSize: arrayBuffer.byteLength,
+      base64Length: base64Audio.length,
+    });
+
+    const audioDataUrl = `data:${file.type};base64,${base64Audio}`;
+    console.log("Data URL created:", {
+      mimeType: file.type,
+      urlPrefix: audioDataUrl.substring(0, 50) + "...",
+      totalLength: audioDataUrl.length,
+    });
 
     try {
-      const output = await runReplicateWithRetry(replicate, base64Audio);
-      console.log("Transcription output:", output);
+      const output = await runReplicateWithRetry(replicate, audioDataUrl);
+      console.log("Raw Replicate output:", output);
 
-      return NextResponse.json({ segments: output });
-    } catch (error: any) {
+      // Extract segments from the response
+      const segments = output.segments || [];
+      console.log("Processed segments:", {
+        count: segments.length,
+        firstSegment: segments[0],
+      });
+
+      return NextResponse.json({ segments });
+    } catch (error) {
+      const replicateError = error as ReplicateError;
       console.error("Final transcription error:", {
-        message: error.message,
-        status: error.response?.status,
-        statusText: error.response?.statusText,
+        message: replicateError.message,
+        status: replicateError.response?.status,
+        statusText: replicateError.response?.statusText,
       });
       
-      // Check for specific error types
-      if (error.response?.status === 401) {
+      if (replicateError.response?.status === 401) {
         return NextResponse.json(
           { error: "Authentication failed. Please check your HuggingFace token." },
           { status: 401 }
         );
       }
       
-      throw error;
+      throw replicateError;
     }
-  } catch (error: any) {
-    console.error("Request processing error:", error);
+  } catch (error) {
+    const apiError = error as Error;
+    console.error("Request processing error:", apiError);
     return NextResponse.json(
-      { error: error.message || "Failed to process request" },
+      { error: apiError.message || "Failed to process request" },
       { status: 500 }
     );
   }
