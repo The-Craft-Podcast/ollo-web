@@ -1,16 +1,17 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import React, { useRef, useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { fetchFile } from '@ffmpeg/util';
-import { Loader2, Copy, ChevronDown, ChevronUp } from "lucide-react";
-import { Toaster } from "@/components/ui/toaster";
 import { Progress } from "@/components/ui/progress";
+import { Toaster } from "@/components/ui/toaster";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Loader2, Copy, ChevronDown, ChevronUp } from "lucide-react";
+import { ffmpegService, VideoFormats } from '@/services/ffmpeg';
 
 interface TranscriptSegment {
   id: number;
@@ -23,25 +24,39 @@ interface TranscriptSegment {
   temperature?: number;
 }
 
+interface FFmpegLogEvent {
+  message: string;
+  type?: string;
+}
+
+interface FFmpegProgressEvent {
+  progress: number;
+  time: number;
+}
+
 export default function TranscribePage() {
   const [file, setFile] = useState<File | null>(null);
-  const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
+  const [transcriptSegments, setTranscriptSegments] = useState<TranscriptSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isCreatingVideo, setIsCreatingVideo] = useState(false);
   const [progress, setProgress] = useState(0);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoFormat, setVideoFormat] = useState(VideoFormats.LANDSCAPE);
+  const [ready, setReady] = useState(false);
+  const [videoSrc, setVideoSrc] = useState('');
   const { toast } = useToast();
 
-  // Cleanup video URL when component unmounts
   useEffect(() => {
-    return () => {
+    const cleanupVideoUrl = () => {
       if (videoUrl) {
         console.log("[Cleanup] Revoking URL on unmount:", videoUrl);
         URL.revokeObjectURL(videoUrl);
       }
     };
+
+    return cleanupVideoUrl;
   }, [videoUrl]);
 
   useEffect(() => {
@@ -53,11 +68,12 @@ export default function TranscribePage() {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
       setFile(selectedFile);
-      setTranscript([]);
+      setTranscriptSegments([]);
       setError(null);
+      const fileName = selectedFile.name.length > 50 ? `${selectedFile.name.slice(0, 47)}...` : selectedFile.name;
       toast({
         title: "File selected",
-        description: `Selected file: ${selectedFile.name}`,
+        description: `Selected file: ${fileName}`,
       });
     }
   };
@@ -67,38 +83,53 @@ export default function TranscribePage() {
       setIsLoading(true);
       setError(null);
       
-      const formData = new FormData();
-      if (!file) return;
-      formData.append("file", file);
+      if (!file) {
+        toast({
+          title: "Error",
+          description: "Please select an audio file first",
+          variant: "destructive",
+        });
+        return;
+      }
 
+      const formData = new FormData();
+      formData.append("audio", file);
+
+      console.log("Sending request to transcribe API...");
       const response = await fetch("/api/transcribe", {
         method: "POST",
         body: formData,
       });
 
       if (!response.ok) {
-        throw new Error("Failed to transcribe audio");
+        const errorData = await response.json();
+        console.error("Transcription error:", errorData);
+        throw new Error(errorData.error || "Failed to transcribe audio");
       }
 
       const data = await response.json();
       console.log("Received transcript data:", data);
       
       if (!data.segments || !Array.isArray(data.segments)) {
+        console.error("Invalid response format:", data);
         throw new Error("Invalid transcript format received");
       }
 
-      setTranscript(data.segments);
+      setTranscriptSegments(data.segments);
       toast({
         title: "Transcription complete",
         description: `Transcribed ${data.segments.length} segments`
       });
       
     } catch (error) {
-      if (error instanceof Error) {
-        setError(error.message);
-      } else {
-        setError("Failed to transcribe audio");
-      }
+      console.error("Transcription error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to transcribe audio";
+      setError(errorMessage);
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -112,15 +143,15 @@ export default function TranscribePage() {
   };
 
   const handleCopyTranscript = async () => {
-    const transcriptText = transcript.map(segment => 
-      `${formatTime(segment.start)} --> ${formatTime(segment.end)}\n${segment.text}\n`
-    ).join('\n');
+    const text = transcriptSegments.map(segment => segment.text).join('\n');
+    const lines = text.split('\n');
+    const transcriptText = lines.map(line => `${line}\n`).join('');
     
     try {
       await navigator.clipboard.writeText(transcriptText);
       toast({
         title: "Copied to clipboard",
-        description: "Transcript has been copied in subtitle format"
+        description: "Transcript has been copied in plain text format"
       });
     } catch {
       toast({
@@ -132,12 +163,7 @@ export default function TranscribePage() {
   };
 
   const createVideoWithSubtitles = async () => {
-    console.log("[Video Creation] Starting video creation process");
-    console.log("[Video Creation] Current video URL:", videoUrl);
-    console.log("[Video Creation] Current creating state:", isCreatingVideo);
-    
-    if (!transcript.length) {
-      console.log("[Video Creation] Error: No transcript available");
+    if (!transcriptSegments.length || !file) {
       toast({
         title: "Error",
         description: "Please upload an audio file and generate transcript first",
@@ -148,193 +174,35 @@ export default function TranscribePage() {
     setProgress(0);
     setIsCreatingVideo(true);
     setVideoUrl(null);
-    
+
     try {
-      // Create canvas for background
-      const canvas = document.createElement('canvas');
-      canvas.width = 1920;
-      canvas.height = 1080;
-      const ctx = canvas.getContext('2d');
-      
-      if (!ctx) {
-        throw new Error("Failed to get canvas context");
+      // Initialize FFmpeg if not already loaded
+      if (!ffmpegService.isLoaded()) {
+        await ffmpegService.load();
       }
 
-      // Draw black background
-      ctx.fillStyle = 'black';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
-      // Convert canvas to image
-      const backgroundBlob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((blob) => resolve(blob!), 'image/png');
-      });
+      // Create video with subtitles
+      const url = await ffmpegService.createVideoWithSubtitles(
+        file,
+        transcriptSegments,
+        (progress) => setProgress(progress),
+        videoFormat
+      );
 
-      console.log("[Video Creation] Created background image");
-
-      // Initialize FFmpeg with logging
-      const ffmpeg = new FFmpeg();
-      console.log("[Video Creation] Loading FFmpeg");
-
-      // Load FFmpeg with local files and enable logging
-      await ffmpeg.load({
-        coreURL: '/ffmpeg-core.js',
-        wasmURL: '/ffmpeg-core.wasm',
-        log: true
-      });
-
-      // Add log callback
-      ffmpeg.on('log', ({ message }) => {
-        console.log("[FFmpeg]", message);
-      });
-
-      // Add progress callback
-      ffmpeg.on('progress', ({ progress: p }) => {
-        // progress is a float between 0 and 1
-        setProgress(Math.round(p * 100));
-      });
-
-      console.log("[Video Creation] FFmpeg loaded");
-
-      // Load and write font file to FFmpeg filesystem
-      const fontResponse = await fetch('/fonts/Arial.ttf');
-      const fontData = await fontResponse.arrayBuffer();
-      await ffmpeg.writeFile('font.ttf', new Uint8Array(fontData));
-      console.log("[Video Creation] Font file written to filesystem");
-
-      // Write background image and audio to FFmpeg virtual filesystem
-      await ffmpeg.writeFile('background.png', await fetchFile(backgroundBlob));
-      console.log("[Video Creation] Background image written to filesystem");
-
-      // Get audio file from the input element
-      const audioFile = document.querySelector<HTMLInputElement>('input[type="file"]')?.files?.[0];
-      if (!audioFile) {
-        throw new Error("No audio file found");
-      }
-      await ffmpeg.writeFile('audio.mp3', await fetchFile(audioFile));
-      console.log("[Video Creation] Audio file written to filesystem");
-
-      // Create filter complex with timed text overlays
-      const textFilters = transcript.map((segment, index) => {
-        // Break text into wider lines (around 100 chars each)
-        const words = segment.text.split(' ');
-        let lines = [];
-        let currentLine = [];
-        let currentLength = 0;
-
-        for (const word of words) {
-          if (currentLength + word.length > 100) {
-            lines.push(currentLine.join(' '));
-            currentLine = [word];
-            currentLength = word.length;
-          } else {
-            currentLine.push(word);
-            currentLength += word.length + 1; // +1 for space
-          }
-        }
-        if (currentLine.length > 0) {
-          lines.push(currentLine.join(' '));
-        }
-
-        // Properly escape special characters for FFmpeg
-        const escapedText = lines
-          .map(line => 
-            line
-              .replace(/\\/g, "\\\\\\\\") // Escape backslashes first
-              .replace(/'/g, "'\\\\\\''") // Escape single quotes
-              .replace(/[\[\](){}]/g, "\\\\$&") // Escape brackets
-              .replace(/:/g, "\\\\:") // Escape colons
-              .replace(/,/g, "\\\\,") // Escape commas
-          )
-          .join('\\\n'); // Double-escaped newline for FFmpeg
-
-        // Calculate y position to center text vertically
-        const lineCount = lines.length;
-        const lineHeight = 10;
-        const yOffset = (lineCount * lineHeight) / 2;
-        const boxBorderSize = 8; // Add some padding around the text
-        
-        // Create drawtext filter with improved text box and positioning
-        return `drawtext=fontfile=font.ttf:` +
-               `text='${escapedText}':` +
-               `fontsize=36:` + // Increased font size
-               `fontcolor=white:` +
-               `box=1:` +
-               `boxcolor=black@0.85:` + // More opaque background
-               `boxborderw=${boxBorderSize}:` +
-               `x=(w-text_w)/2:` +
-               `y=(h/2)-${yOffset}:` + // Centered vertically
-               `line_spacing=${lineHeight}:` + // Increased line spacing
-               `enable='between(t,${segment.start},${segment.end})'`;
-      });
-
-      const filterComplex = textFilters.join(',');
-      console.log("[Video Creation] Filter complex:", filterComplex);
-
-      // Calculate video duration from last segment
-      const duration = Math.ceil(transcript[transcript.length - 1].end);
-      console.log("[Video Creation] Video duration:", duration);
-
-      // Create video with text overlay and audio
-      const command = [
-        '-loop', '1',
-        '-i', 'background.png',
-        '-i', 'audio.mp3',
-        '-t', duration.toString(),
-        '-vf', filterComplex,
-        '-c:v', 'libx264',
-        '-c:a', 'aac',
-        '-preset', 'ultrafast',
-        '-pix_fmt', 'yuv420p',
-        '-f', 'mp4',
-        '-movflags', '+faststart',
-        '-y',
-        'output.mp4'
-      ];
-      
-      console.log("[Video Creation] FFmpeg command:", command.join(' '));
-      await ffmpeg.exec(command);
-
-      console.log("[Video Creation] Video processing complete");
-
-      // Read the output file
-      const data = await ffmpeg.readFile('output.mp4');
-      console.log("[Video Creation] Output file size:", data.length, "bytes");
-      
-      const videoBlob = new Blob([data], { type: 'video/mp4' });
-      console.log("[Video Creation] Video blob created:", {
-        size: videoBlob.size,
-        type: videoBlob.type
-      });
-      
-      // Cleanup old URL if it exists
-      if (videoUrl) {
-        console.log("[Video Creation] Cleaning up old URL:", videoUrl);
-        URL.revokeObjectURL(videoUrl);
-      }
-
-      // Create new video URL
-      const url = URL.createObjectURL(videoBlob);
-      console.log("[Video Creation] Created new URL:", url);
-      
       setVideoUrl(url);
-      console.log("[Video Creation] Set video URL in state");
-      
       toast({
         title: "Success",
         description: "Video created successfully",
       });
     } catch (error) {
-      console.error("[Video Creation] Error:", error);
-      setVideoUrl(null);
+      console.error("Error creating video:", error);
       toast({
         title: "Error",
         description: error instanceof Error ? error.message : "Failed to create video",
+        variant: "destructive",
       });
     } finally {
-      console.log("[Video Creation] Cleanup - Setting states");
-      console.log("[Video Creation] Final video URL:", videoUrl);
       setIsCreatingVideo(false);
-      setProgress(0);
     }
   };
 
@@ -380,7 +248,7 @@ export default function TranscribePage() {
             />
           </div>
 
-          {!transcript.length && (
+          {!transcriptSegments.length && (
             <Button
               type="submit"
               disabled={!file || isLoading}
@@ -397,21 +265,41 @@ export default function TranscribePage() {
             </Button>
           )}
 
-          {transcript.length > 0 && (
-            <Button 
-              onClick={createVideoWithSubtitles} 
-              disabled={!transcript.length || isCreatingVideo}
-              className="w-full"
-            >
-              {isCreatingVideo ? (
-                <div className="flex items-center justify-center">
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  <span>Creating Video...</span>
+          {transcriptSegments.length > 0 && (
+            <div className="flex flex-col space-y-4">
+              <div className="flex justify-between items-center">
+                <div className="space-y-2">
+                  <Label>Video Format</Label>
+                  <div className="flex space-x-2">
+                    <Button
+                      variant={videoFormat === VideoFormats.LANDSCAPE ? "default" : "outline"}
+                      onClick={() => setVideoFormat(VideoFormats.LANDSCAPE)}
+                    >
+                      Landscape (16:9)
+                    </Button>
+                    <Button
+                      variant={videoFormat === VideoFormats.TIKTOK ? "default" : "outline"}
+                      onClick={() => setVideoFormat(VideoFormats.TIKTOK)}
+                    >
+                      TikTok (9:16)
+                    </Button>
+                  </div>
                 </div>
-              ) : (
-                "Create Video"
-              )}
-            </Button>
+                <Button
+                  onClick={createVideoWithSubtitles}
+                  disabled={isCreatingVideo || !transcriptSegments.length || !!videoUrl}
+                >
+                  {isCreatingVideo ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Creating Video ({progress}%)
+                    </>
+                  ) : (
+                    "Create Video"
+                  )}
+                </Button>
+              </div>
+            </div>
           )}
         </form>
 
@@ -423,14 +311,14 @@ export default function TranscribePage() {
       </Card>
 
       {/* Card 2: Transcript */}
-      {transcript.length > 0 && (
+      {transcriptSegments.length > 0 && (
         <Card className="p-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold">Transcript</h2>
             <div className="flex gap-2">
               <Button onClick={handleCopyTranscript} variant="outline" size="sm">
                 <Copy className="h-4 w-4 mr-2" />
-                Copy
+                Copy Text
               </Button>
               <Button
                 onClick={() => setIsCollapsed(!isCollapsed)}
@@ -438,28 +326,39 @@ export default function TranscribePage() {
                 size="sm"
               >
                 {isCollapsed ? (
-                  <React.Fragment key="show-more">
+                  <>
                     <ChevronDown className="h-4 w-4 mr-2" />
-                    Show More
-                  </React.Fragment>
+                    Expand
+                  </>
                 ) : (
-                  <React.Fragment key="show-less">
+                  <>
                     <ChevronUp className="h-4 w-4 mr-2" />
-                    Show Less
-                  </React.Fragment>
+                    Collapse
+                  </>
                 )}
               </Button>
             </div>
           </div>
-          <div className={`space-y-2 overflow-hidden transition-all duration-300 ${isCollapsed ? 'max-h-40' : 'max-h-[800px]'}`}>
-            {transcript.map((segment) => (
-              <div key={segment.id} className="flex flex-col gap-1 p-2 rounded hover:bg-muted">
-                <div className="text-xs text-muted-foreground">
-                  {formatTime(segment.start)} --> {formatTime(segment.end)}
-                </div>
-                <div className="text-sm">{segment.text}</div>
+          <div className="space-y-2">
+            {isCollapsed ? (
+              <p className="whitespace-pre-wrap">
+                {transcriptSegments.map(segment => segment.text.trim()).join('').substring(0, 200)}...
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {transcriptSegments.map((segment) => (
+                  <div
+                    key={segment.id}
+                    className="border-b last:border-b-0 py-2"
+                  >
+                    <div className="text-sm text-muted-foreground whitespace-nowrap">
+                      {formatTime(segment.start)} - {formatTime(segment.end)}
+                    </div>
+                    <p className="flex-1 whitespace-pre-wrap">{segment.text.trim()}</p>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         </Card>
       )}
@@ -488,20 +387,22 @@ export default function TranscribePage() {
                 className="w-full"
               />
               <p className="text-sm text-muted-foreground text-center">
-                {progress}% - Creating video with subtitles...
+                {progress}{'%'} - Creating video with subtitles...
               </p>
             </div>
-          ) : videoUrl && (
-            <div className="aspect-video w-full bg-black rounded-lg overflow-hidden">
-              <video
-                src={videoUrl}
-                controls
-                className="w-full h-full"
-                onError={(e) => console.error("[Video Player] Error loading video:", e)}
-              >
-                Your browser does not support the video tag.
-              </video>
-            </div>
+          ) : (
+            videoUrl && (
+              <div className="aspect-video w-full bg-black rounded-lg overflow-hidden">
+                <video
+                  src={videoUrl}
+                  controls
+                  className="w-full h-full"
+                  onError={(e) => console.error("[Video Player] Error loading video:", e)}
+                >
+                  Your browser does not support the video tag.
+                </video>
+              </div>
+            )
           )}
         </Card>
       )}

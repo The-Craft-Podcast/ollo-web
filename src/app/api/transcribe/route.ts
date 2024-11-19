@@ -1,170 +1,88 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Buffer } from "buffer";
 import Replicate from "replicate";
 
 console.log("=== Starting API Route ===");
 console.log("Environment variables:", {
-  REPLICATE_API_TOKEN: process.env.REPLICATE_API_TOKEN ? 'r8_H6...' : 'missing',
+  REPLICATE_API_TOKEN: process.env.REPLICATE_API_TOKEN,
   REPLICATE_ENDPOINT: process.env.REPLICATE_ENDPOINT,
-  HUGGINGFACE_TOKEN: process.env.HUGGINGFACE_TOKEN ? 'hf_Nm...' : 'missing',
+  HUGGINGFACE_TOKEN: process.env.HUGGINGFACE_TOKEN,
 });
-
-// Initialize the Replicate client
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN,
-});
-
-const MAX_RETRIES = 3;
-const INITIAL_RETRY_DELAY = 1000; // 1 second
-
-interface ReplicateError extends Error {
-  response?: {
-    status: number;
-    statusText: string;
-  };
-}
-
-async function wait(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function runReplicateWithRetry(
-  replicate: Replicate,
-  audioDataUrl: string,
-  retryCount = 0
-): Promise<any> {
-  try {
-    console.log("=== Replicate API Call Attempt", retryCount + 1, "===");
-    console.log("Audio URL format check:", {
-      startsWithData: audioDataUrl.startsWith('data:'),
-      containsBase64: audioDataUrl.includes(';base64,'),
-      totalLength: audioDataUrl.length,
-      preview: audioDataUrl.substring(0, 50) + "..."
-    });
-
-    if (!process.env.REPLICATE_ENDPOINT) {
-      throw new Error("REPLICATE_ENDPOINT is not configured");
-    }
-
-    console.log("Using Replicate model:", process.env.REPLICATE_ENDPOINT);
-
-    const output = await replicate.run(
-      process.env.REPLICATE_ENDPOINT,
-      {
-        input: {
-          audio_file: audioDataUrl,
-          model: "large-v2",
-          transcription: "plain text",
-          translate: false,
-          temperature: 0,
-          suppress_tokens: "-1",
-          condition_on_previous_text: false,
-          compression_ratio_threshold: 2.4,
-          logprob_threshold: -1,
-          no_speech_threshold: 0.6,
-        },
-      }
-    );
-
-    console.log("API call successful! Raw output:", output);
-    return output;
-  } catch (error) {
-    const replicateError = error as ReplicateError;
-    console.error(`Attempt ${retryCount + 1} failed:`, {
-      message: replicateError.message,
-      status: replicateError.response?.status,
-      statusText: replicateError.response?.statusText,
-    });
-
-    if (retryCount < MAX_RETRIES) {
-      const delay = INITIAL_RETRY_DELAY * Math.pow(2, retryCount);
-      console.log(`Retrying in ${delay}ms...`);
-      await wait(delay);
-      return runReplicateWithRetry(replicate, audioDataUrl, retryCount + 1);
-    }
-
-    throw replicateError;
-  }
-}
 
 export async function POST(request: NextRequest) {
-  console.log("=== Starting Transcription Request ===");
-  
-  if (!process.env.REPLICATE_API_TOKEN) {
-    console.error("Missing REPLICATE_API_TOKEN");
-    return NextResponse.json(
-      { error: "REPLICATE_API_TOKEN is not configured" },
-      { status: 500 }
-    );
-  }
-
   try {
-    console.log("=== Processing Upload ===");
-    const formData = await request.formData();
-    const file = formData.get("file") as File;
-    
-    if (!file) {
-      console.error("No file provided in request");
+    // Check environment variables
+    if (!process.env.REPLICATE_API_TOKEN) {
+      console.error('Missing REPLICATE_API_TOKEN');
       return NextResponse.json(
-        { error: "No file provided" },
+        { error: "Server configuration error" },
+        { status: 500 }
+      );
+    }
+
+    if (!process.env.REPLICATE_ENDPOINT) {
+      console.error('Missing REPLICATE_ENDPOINT');
+      return NextResponse.json(
+        { error: "Server configuration error" },
+        { status: 500 }
+      );
+    }
+
+    const formData = await request.formData();
+    const audioFile = formData.get('audio') as File;
+    
+    if (!audioFile) {
+      console.error('No audio file provided');
+      return NextResponse.json(
+        { error: "No audio file provided" },
         { status: 400 }
       );
     }
 
-    console.log("File received:", {
-      name: file.name,
-      type: file.type,
-      size: file.size,
-    });
-
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const base64Audio = buffer.toString("base64");
-    console.log("Base64 conversion complete:", {
-      originalSize: arrayBuffer.byteLength,
-      base64Length: base64Audio.length,
-    });
-
-    const audioDataUrl = `data:${file.type};base64,${base64Audio}`;
-    console.log("Data URL created:", {
-      mimeType: file.type,
-      urlPrefix: audioDataUrl.substring(0, 50) + "...",
-      totalLength: audioDataUrl.length,
-    });
-
-    try {
-      const output = await runReplicateWithRetry(replicate, audioDataUrl);
-      console.log("Raw Replicate output:", output);
-
-      // Extract segments from the response
-      const segments = output.segments || [];
-      console.log("Processed segments:", {
-        count: segments.length,
-        firstSegment: segments[0],
-      });
-
-      return NextResponse.json({ segments });
-    } catch (error) {
-      const replicateError = error as ReplicateError;
-      console.error("Final transcription error:", {
-        message: replicateError.message,
-        status: replicateError.response?.status,
-        statusText: replicateError.response?.statusText,
-      });
-      
-      if (replicateError.response?.status === 401) {
-        return NextResponse.json(
-          { error: "Authentication failed. Please check your HuggingFace token." },
-          { status: 401 }
-        );
-      }
-      
-      throw replicateError;
+    // Check file size (max 25MB)
+    const maxSize = 25 * 1024 * 1024; // 25MB in bytes
+    if (audioFile.size > maxSize) {
+      console.error('File too large:', audioFile.size, 'bytes');
+      return NextResponse.json(
+        { error: "File too large. Maximum size is 25MB." },
+        { status: 400 }
+      );
     }
+
+    // Check file type
+    if (!audioFile.type.startsWith('audio/')) {
+      console.error('Invalid file type:', audioFile.type);
+      return NextResponse.json(
+        { error: "Invalid file type. Please upload an audio file." },
+        { status: 400 }
+      );
+    }
+
+    // Convert audio file to data URL
+    const arrayBuffer = await audioFile.arrayBuffer();
+    const base64Audio = Buffer.from(arrayBuffer).toString('base64');
+    const dataUrl = `data:${audioFile.type};base64,${base64Audio}`;
+
+    console.log('Making request to Replicate API...');
+    const replicate = new Replicate({
+      auth: process.env.REPLICATE_API_TOKEN,
+    });
+
+    const output = await replicate.run(process.env.REPLICATE_ENDPOINT as `${string}/${string}` | `${string}/${string}:${string}`, {
+      input: {
+        audio_file: dataUrl,
+      }
+    });
+
+    return NextResponse.json(output);
+
   } catch (error) {
-    const apiError = error as Error;
-    console.error("Request processing error:", apiError);
+    console.error('Unhandled error:', error);
     return NextResponse.json(
-      { error: apiError.message || "Failed to process request" },
+      { 
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : String(error),
+      },
       { status: 500 }
     );
   }
