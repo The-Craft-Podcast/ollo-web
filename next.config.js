@@ -1,10 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     reactStrictMode: true,
-    swcMinify: true,
-    images: {
-        domains: ['firebasestorage.googleapis.com'],
-    },
     // Enable Cross-Origin Isolation
     async headers() {
       return [
@@ -17,29 +13,12 @@ const nextConfig = {
         },
       ];
     },
-    // Handle FFmpeg WASM files
-    webpack: (config, { isServer }) => {
-        // Add WASM support
-        config.experiments = {
-            ...config.experiments,
-            asyncWebAssembly: true,
-            layers: true,
-        };
-
-        // Add rule for WASM files
-        config.module.rules.push({
-            test: /\.wasm$/,
-            type: 'webassembly/async',
-        });
-
-        // Handle FFmpeg imports
-        config.resolve.fallback = {
-            ...config.resolve.fallback,
-            fs: false,
-            path: false,
-        };
-
-        return config;
+    experimental: {
+        serverComponentsExternalPackages: [
+            '@remotion/bundler',
+            '@remotion/renderer',
+            '@remotion/compositor-darwin-arm64',
+        ],
     },
 }
 

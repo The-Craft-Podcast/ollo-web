@@ -1,199 +1,165 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { act } from "react";
-import TranscribePage from "../page";
-import { ffmpegService, VideoFormats } from '@/services/ffmpeg';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import TranscribePage from '../page';
+import { mockFile } from '@/lib/test-utils';
 
-const mockToast = jest.fn();
+// Mock the remotion service
+jest.mock('@/remotion/service', () => ({
+  remotionService: {
+    createVideo: jest.fn().mockResolvedValue('mock-video-url'),
+  },
+}));
 
-// Mock the entire toast module
-jest.mock("@/hooks/use-toast", () => ({
-  useToast: () => ({
-    toast: mockToast,
-    toasts: []
+// Mock the transcribe API
+jest.mock('@/app/api/transcribe/route', () => ({
+  POST: jest.fn().mockResolvedValue({
+    json: () => Promise.resolve({
+      segments: [
+        { id: 1, start: 0, end: 2, text: 'Hello' },
+        { id: 2, start: 2, end: 4, text: 'World' }
+      ]
+    })
   })
 }));
 
-// Mock Toaster component
-jest.mock("@/components/ui/toaster", () => ({
-  Toaster: () => null
+// Mock the useToast hook
+jest.mock('@/hooks/use-toast', () => ({
+  useToast: () => ({
+    toast: jest.fn()
+  })
 }));
 
-// Mock FFmpeg service
-jest.mock('@/services/ffmpeg', () => ({
-  ffmpegService: {
-    isLoaded: jest.fn().mockReturnValue(false),
-    load: jest.fn().mockResolvedValue(undefined),
-    createVideoWithSubtitles: jest.fn().mockResolvedValue('mock-video-url'),
-  },
-  VideoFormats: {
-    LANDSCAPE: { width: 1920, height: 1080, name: 'landscape' as const },
-    TIKTOK: { width: 1080, height: 1920, name: 'tiktok' as const }
-  }
+// Mock the Toaster component
+jest.mock('@/components/ui/toaster', () => ({
+  Toaster: () => null,
 }));
 
-describe("TranscribePage", () => {
-  beforeAll(() => {
-    global.fetch = jest.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ segments: [{ id: 1, start: 0, end: 1, text: "Hello" }] }),
-      })
-    ) as jest.Mock;
-  });
-
-  afterAll(() => {
-    if (global.fetch) {
-      (global.fetch as jest.Mock).mockClear();
-      delete (global as any).fetch;
-    }
-  });
+describe('TranscribePage', () => {
+  const mockTranscriptResponse = {
+    segments: [
+      { id: 1, start: 0, end: 2, text: 'Hello' },
+      { id: 2, start: 2, end: 4, text: 'World' },
+    ],
+  };
 
   beforeEach(() => {
+    // Reset all mocks before each test
     jest.clearAllMocks();
-    (window.URL.createObjectURL as jest.Mock).mockReset();
-    (window.URL.revokeObjectURL as jest.Mock).mockReset();
+    
+    // Mock URL.createObjectURL and URL.revokeObjectURL
+    URL.createObjectURL = jest.fn().mockReturnValue('mock-object-url');
+    URL.revokeObjectURL = jest.fn();
   });
 
-  it("renders upload form", () => {
+  it('renders upload form', () => {
     render(<TranscribePage />);
     expect(screen.getByLabelText(/upload audio file/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /transcribe audio/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /transcribe audio/i })).toBeInTheDocument();
   });
 
-  it("handles file upload", async () => {
-    const user = userEvent.setup();
-    render(<TranscribePage />);
-    
-    const file = new File(["dummy"], "test.mp3", { type: "audio/mpeg" });
-    const input = screen.getByLabelText(/upload audio file/i);
-    
-    await act(async () => {
-      await user.upload(input, file);
-    });
-
-    expect(mockToast).toHaveBeenCalledWith({
-      title: "File selected",
-      description: "Selected file: test.mp3"
-    });
-  });
-
-  it("initializes FFmpeg service when creating video", async () => {
+  it('handles file upload', async () => {
     const user = userEvent.setup();
     render(<TranscribePage />);
 
-    // Upload and transcribe file
-    const file = new File(["dummy"], "test.mp3", { type: "audio/mpeg" });
     const input = screen.getByLabelText(/upload audio file/i);
-    await user.upload(input, file);
+    await user.upload(input, mockFile);
 
-    const transcribeButton = screen.getByRole("button", { name: /transcribe audio/i });
-    await user.click(transcribeButton);
-
-    // Wait for transcription to complete
-    await waitFor(() => {
-      expect(screen.getByText(/create video/i)).toBeInTheDocument();
-    });
-
-    // Click create video button
-    const createButton = screen.getByRole("button", { name: /create video/i });
-    await user.click(createButton);
-
-    expect(ffmpegService.load).toHaveBeenCalled();
+    expect(screen.getByText(/test\.mp3/i)).toBeInTheDocument();
   });
 
-  it("handles transcription process", async () => {
+  it('handles transcription process', async () => {
     const user = userEvent.setup();
     render(<TranscribePage />);
 
     // Upload file
-    const file = new File(["dummy"], "test.mp3", { type: "audio/mpeg" });
     const input = screen.getByLabelText(/upload audio file/i);
-    await user.upload(input, file);
+    await user.upload(input, mockFile);
 
     // Click transcribe button
-    const transcribeButton = screen.getByRole("button", { name: /transcribe audio/i });
+    const transcribeButton = screen.getByRole('button', { name: /transcribe audio/i });
     await user.click(transcribeButton);
 
     // Wait for transcription to complete
     await waitFor(() => {
-      expect(screen.getByText("0:00.000 - 0:01.000")).toBeInTheDocument();
-      expect(screen.getByText("Hello")).toBeInTheDocument();
+      expect(screen.getByText('Hello')).toBeInTheDocument();
+      expect(screen.getByText('World')).toBeInTheDocument();
     });
   });
 
-  it("handles video format selection", async () => {
+  it('creates video with subtitles when button is clicked', async () => {
     const user = userEvent.setup();
     render(<TranscribePage />);
 
-    // Upload and transcribe file first
-    const file = new File(["dummy"], "test.mp3", { type: "audio/mpeg" });
+    // Upload file and transcribe
     const input = screen.getByLabelText(/upload audio file/i);
-    await user.upload(input, file);
+    await user.upload(input, mockFile);
 
-    const transcribeButton = screen.getByRole("button", { name: /transcribe audio/i });
+    // Click transcribe button
+    const transcribeButton = screen.getByRole('button', { name: /transcribe audio/i });
     await user.click(transcribeButton);
 
     // Wait for transcription to complete
     await waitFor(() => {
-      expect(screen.getByText(/landscape/i)).toBeInTheDocument();
-      expect(screen.getByText(/tiktok/i)).toBeInTheDocument();
-    });
-
-    // Click TikTok format button
-    const tiktokButton = screen.getByRole("button", { name: /tiktok/i });
-    await user.click(tiktokButton);
-
-    // Click Landscape format button
-    const landscapeButton = screen.getByRole("button", { name: /landscape/i });
-    await user.click(landscapeButton);
-
-    // Since we're using Object.is() for comparison, we can't easily test the button state
-    // Instead, we'll verify that the buttons are present and clickable
-    expect(tiktokButton).toBeInTheDocument();
-    expect(landscapeButton).toBeInTheDocument();
-  });
-
-  it("handles video creation", async () => {
-    const user = userEvent.setup();
-    const { unmount } = render(<TranscribePage />);
-
-    // Upload file
-    const file = new File(["dummy"], "test.mp3", { type: "audio/mpeg" });
-    const input = screen.getByLabelText(/upload audio file/i);
-    await user.upload(input, file);
-
-    // Click transcribe button
-    const transcribeButton = screen.getByRole("button", { name: /transcribe audio/i });
-    await user.click(transcribeButton);
-
-    // Wait for transcription to complete and create video button to appear
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /create video/i })).toBeInTheDocument();
+      expect(screen.getByText('Hello')).toBeInTheDocument();
     });
 
     // Click create video button
-    const createButton = screen.getByRole("button", { name: /create video/i });
-    await user.click(createButton);
+    const createVideoButton = screen.getByRole('button', { name: /create video/i });
+    await user.click(createVideoButton);
 
-    // Check if video creation was called
-    expect(ffmpegService.createVideoWithSubtitles).toHaveBeenCalledWith(
-      file,
-      expect.arrayContaining([expect.objectContaining({ text: "Hello" })]),
-      expect.any(Function),
-      VideoFormats.LANDSCAPE
-    );
-
-    // Wait for video URL to be set and component to update
+    // Verify that the video creation was called with correct parameters
     await waitFor(() => {
-      const videoElement = screen.getByText("Your browser does not support the video tag.").closest("video");
-      expect(videoElement).toHaveAttribute("src", "mock-video-url");
+      expect(remotionService.createVideo).toHaveBeenCalledWith(
+        expect.any(String), // backgroundImageUrl
+        expect.any(String), // audioUrl
+        mockTranscriptResponse.segments.map(segment => ({
+          text: segment.text,
+          start: segment.start,
+          end: segment.end,
+        })),
+        'landscape' // default format
+      );
     });
 
-    // Unmount component to trigger cleanup
-    unmount();
+    // Verify that the video URL is set
+    expect(screen.getByRole('video')).toHaveAttribute('src', 'mock-video-url');
+  });
 
-    // Verify cleanup
-    expect(window.URL.revokeObjectURL).toHaveBeenCalledWith("mock-video-url");
+  it('handles video format selection', async () => {
+    const user = userEvent.setup();
+    render(<TranscribePage />);
+
+    // Upload file and transcribe
+    const input = screen.getByLabelText(/upload audio file/i);
+    await user.upload(input, mockFile);
+
+    // Click transcribe button
+    const transcribeButton = screen.getByRole('button', { name: /transcribe audio/i });
+    await user.click(transcribeButton);
+
+    // Wait for transcription to complete
+    await waitFor(() => {
+      expect(screen.getByText('Hello')).toBeInTheDocument();
+    });
+
+    // Click format buttons and verify they change the format
+    const portraitButton = screen.getByRole('button', { name: /portrait/i });
+    const landscapeButton = screen.getByRole('button', { name: /landscape/i });
+    const squareButton = screen.getByRole('button', { name: /square/i });
+
+    // Initially landscape should be selected
+    expect(landscapeButton).toHaveClass('bg-primary');
+    expect(portraitButton).toHaveClass('bg-background');
+    expect(squareButton).toHaveClass('bg-background');
+
+    await user.click(portraitButton);
+    expect(portraitButton).toHaveClass('bg-primary');
+    expect(landscapeButton).toHaveClass('bg-background');
+    expect(squareButton).toHaveClass('bg-background');
+
+    await user.click(squareButton);
+    expect(portraitButton).toHaveClass('bg-background');
+    expect(landscapeButton).toHaveClass('bg-background');
+    expect(squareButton).toHaveClass('bg-primary');
   });
 });

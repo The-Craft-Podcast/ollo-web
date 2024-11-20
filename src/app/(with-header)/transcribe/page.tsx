@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Toaster } from "@/components/ui/toaster";
 import { Loader2, Copy, ChevronDown, ChevronUp } from "lucide-react";
-import { ffmpegService, VideoFormats } from '@/services/ffmpeg';
+import { VideoFormats } from "@/remotion/config";
 
 export interface TranscriptSegment {
   id: number;
@@ -45,11 +45,6 @@ export default function TranscribePage() {
 
     return cleanupVideoUrl;
   }, [videoUrl]);
-
-  useEffect(() => {
-    console.log("[Video State] Video URL changed:", videoUrl);
-    console.log("[Video State] Is creating video:", isCreatingVideo);
-  }, [videoUrl, isCreatingVideo]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -123,22 +118,23 @@ export default function TranscribePage() {
   };
 
   const formatTime = (seconds: number): string => {
-    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
     const remainingSeconds = Math.floor(seconds % 60);
     const milliseconds = Math.floor((seconds % 1) * 1000);
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')},${milliseconds.toString().padStart(3, '0')}`;
   };
 
   const handleCopyTranscript = async () => {
-    const text = transcriptSegments.map(segment => segment.text).join('\n');
-    const lines = text.split('\n');
-    const transcriptText = lines.map(line => `${line}\n`).join('');
+    const srtContent = transcriptSegments.map((segment, index) => {
+      return `${index + 1}\n${formatTime(segment.start)} --> ${formatTime(segment.end)}\n${segment.text}\n`;
+    }).join('\n');
     
     try {
-      await navigator.clipboard.writeText(transcriptText);
+      await navigator.clipboard.writeText(srtContent);
       toast({
         title: "Copied to clipboard",
-        description: "Transcript has been copied in plain text format"
+        description: "Transcript has been copied in SRT format"
       });
     } catch {
       toast({
@@ -150,10 +146,18 @@ export default function TranscribePage() {
   };
 
   const createVideoWithSubtitles = async () => {
+    console.log('[Video Creation Client] Starting video creation process');
+    
     if (!transcriptSegments.length || !file) {
+      console.warn('[Video Creation Client] Missing required data:', {
+        hasTranscriptSegments: transcriptSegments.length > 0,
+        hasFile: !!file
+      });
+      
       toast({
         title: "Error",
         description: "Please upload an audio file and generate transcript first",
+        variant: "destructive",
       });
       return;
     }
@@ -163,42 +167,72 @@ export default function TranscribePage() {
     setVideoUrl(null);
 
     try {
-      // Initialize FFmpeg if not already loaded
-      if (!ffmpegService.isLoaded()) {
-        await ffmpegService.load();
+      console.log('[Video Creation Client] Preparing data:', {
+        audioFileName: file.name,
+        audioFileSize: file.size,
+        transcriptSegments: transcriptSegments.length,
+        videoFormat: videoFormat.name,
+      });
+
+      const formData = new FormData();
+      formData.append('audio', file);
+      formData.append('subtitles', JSON.stringify(transcriptSegments.map(segment => ({
+        text: segment.text,
+        start: segment.start,
+        end: segment.end,
+      }))));
+      formData.append('format', videoFormat.name);
+
+      console.log('[Video Creation Client] Sending request to API');
+      toast({
+        title: "Creating Video",
+        description: "This may take a few minutes. Please wait...",
+      });
+
+      const startTime = Date.now();
+      const response = await fetch('/api/create-video', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        console.error('[Video Creation Client] API Error:', error);
+        throw new Error(error.error || 'Failed to create video');
       }
 
-      // Create video with subtitles
-      const url = await ffmpegService.createVideoWithSubtitles(
-        file,
-        transcriptSegments,
-        (progress) => setProgress(progress),
-        videoFormat
-      );
-
-      setVideoUrl(url);
+      const { videoUrl } = await response.json();
+      console.log('[Video Creation Client] Video created successfully:', {
+        videoUrl,
+        timeElapsed: `${((Date.now() - startTime) / 1000).toFixed(1)}s`,
+      });
+      
+      setVideoUrl(videoUrl);
+      
       toast({
         title: "Success",
-        description: "Video created successfully",
+        description: "Video created successfully! Click Download to save.",
       });
     } catch (error) {
-      console.error("Error creating video:", error);
+      console.error('[Video Creation Client] Error:', error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+      } : error);
+      
       toast({
         title: "Error",
         description: error instanceof Error ? error.message : "Failed to create video",
         variant: "destructive",
       });
     } finally {
+      console.log('[Video Creation Client] Process complete');
       setIsCreatingVideo(false);
+      setProgress(100);
     }
   };
 
   const handleDownloadVideo = () => {
-    console.log("[Download] Starting download process");
-    console.log("[Download] Video URL:", videoUrl);
-    
     if (!videoUrl) {
-      console.log("[Download] No video URL available");
       return;
     }
     
@@ -207,12 +241,15 @@ export default function TranscribePage() {
       a.href = videoUrl;
       a.download = 'video.mp4';
       document.body.appendChild(a);
-      console.log("[Download] Download element created and appended");
       a.click();
       document.body.removeChild(a);
-      console.log("[Download] Download initiated and element cleaned up");
     } catch (error) {
       console.error("[Download] Error during download:", error);
+      toast({
+        title: "Error",
+        description: "Failed to download video",
+        variant: "destructive",
+      });
     }
   };
 
@@ -251,146 +288,110 @@ export default function TranscribePage() {
               )}
             </Button>
           )}
-
-          {transcriptSegments.length > 0 && (
-            <div className="flex flex-col space-y-4">
-              <div className="flex justify-between items-center">
-                <div className="space-y-2">
-                  <Label>Video Format</Label>
-                  <div className="flex space-x-2">
-                    <Button
-                      variant={Object.is(videoFormat, VideoFormats.LANDSCAPE) ? "default" : "outline"}
-                      onClick={() => setVideoFormat(VideoFormats.LANDSCAPE)}
-                    >
-                      Landscape (16:9)
-                    </Button>
-                    <Button
-                      variant={Object.is(videoFormat, VideoFormats.TIKTOK) ? "default" : "outline"}
-                      onClick={() => setVideoFormat(VideoFormats.TIKTOK)}
-                    >
-                      TikTok (9:16)
-                    </Button>
-                  </div>
-                </div>
-                <Button
-                  onClick={createVideoWithSubtitles}
-                  disabled={isCreatingVideo || !transcriptSegments.length || !!videoUrl}
-                >
-                  {isCreatingVideo ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Creating Video ({progress}%)
-                    </>
-                  ) : (
-                    "Create Video"
-                  )}
-                </Button>
-              </div>
-            </div>
-          )}
         </form>
-
-        {error && (
-          <div className="mt-4 p-4 bg-red-50 text-red-600 rounded-md">
-            {error}
-          </div>
-        )}
       </Card>
 
-      {/* Card 2: Transcript */}
+      {/* Card 2: Transcript Display */}
       {transcriptSegments.length > 0 && (
         <Card className="p-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg font-semibold">Transcript</h2>
-            <div className="flex gap-2">
-              <Button onClick={handleCopyTranscript} variant="outline" size="sm">
-                <Copy className="h-4 w-4 mr-2" />
-                Copy Text
+            <div className="flex space-x-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handleCopyTranscript}
+                title="Copy transcript"
+              >
+                <Copy className="h-4 w-4" />
               </Button>
               <Button
-                onClick={() => setIsCollapsed(!isCollapsed)}
                 variant="outline"
-                size="sm"
+                size="icon"
+                onClick={() => setIsCollapsed(!isCollapsed)}
+                title={isCollapsed ? "Expand transcript" : "Collapse transcript"}
               >
                 {isCollapsed ? (
-                  <>
-                    <ChevronDown className="h-4 w-4 mr-2" />
-                    Expand
-                  </>
+                  <ChevronDown className="h-4 w-4" />
                 ) : (
-                  <>
-                    <ChevronUp className="h-4 w-4 mr-2" />
-                    Collapse
-                  </>
+                  <ChevronUp className="h-4 w-4" />
                 )}
               </Button>
             </div>
           </div>
-          <div className="space-y-2">
-            {isCollapsed ? (
-              <p className="whitespace-pre-wrap">
-                {transcriptSegments.map(segment => segment.text.trim()).join('').substring(0, 200)}...
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {transcriptSegments.map((segment) => (
-                  <div
-                    key={segment.id}
-                    className="border-b last:border-b-0 py-2"
-                  >
-                    <div className="text-sm text-muted-foreground whitespace-nowrap">
-                      {formatTime(segment.start)} - {formatTime(segment.end)}
-                    </div>
-                    <p className="flex-1 whitespace-pre-wrap">{segment.text.trim()}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
 
-      {/* Card 3: Video Output */}
-      {(isCreatingVideo || videoUrl) && (
-        <Card className="p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold">Video Output</h2>
+          {!isCollapsed && (
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {transcriptSegments.map((segment, index) => (
+                <div key={segment.id} className="text-sm">
+                  <span className="text-gray-500">{index + 1}</span>
+                  <span className="mx-2">|</span>
+                  <span className="text-gray-500">{formatTime(segment.start)}</span>
+                  <span className="mx-2">→</span>
+                  <span className="text-gray-500">{formatTime(segment.end)}</span>
+                  <span className="mx-2">:</span>
+                  <span>{segment.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-4 space-y-4">
+            <div className="flex justify-between items-center">
+              <div className="space-y-2">
+                <Label>Video Format</Label>
+                <div className="flex space-x-2">
+                  <Button
+                    variant={videoFormat === VideoFormats.LANDSCAPE ? "default" : "outline"}
+                    onClick={() => setVideoFormat(VideoFormats.LANDSCAPE)}
+                  >
+                    Landscape (16:9)
+                  </Button>
+                  <Button
+                    variant={videoFormat === VideoFormats.PORTRAIT ? "default" : "outline"}
+                    onClick={() => setVideoFormat(VideoFormats.PORTRAIT)}
+                  >
+                    Portrait (9:16)
+                  </Button>
+                  <Button
+                    variant={videoFormat === VideoFormats.SQUARE ? "default" : "outline"}
+                    onClick={() => setVideoFormat(VideoFormats.SQUARE)}
+                  >
+                    Square (1:1)
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <Button
+              onClick={createVideoWithSubtitles}
+              disabled={isCreatingVideo}
+              className="w-full"
+            >
+              {isCreatingVideo ? (
+                <div className="flex items-center justify-center">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <span>Creating Video...</span>
+                </div>
+              ) : (
+                "Create Video"
+              )}
+            </Button>
+
+            {isCreatingVideo && (
+              <Progress value={progress} className="w-full" />
+            )}
+
             {videoUrl && (
               <Button
                 onClick={handleDownloadVideo}
                 variant="outline"
-                size="sm"
+                className="w-full"
               >
                 Download Video
               </Button>
             )}
           </div>
-          
-          {isCreatingVideo ? (
-            <div className="space-y-4">
-              <Progress
-                value={progress}
-                data-testid="video-progress"
-                className="w-full"
-              />
-              <p className="text-sm text-muted-foreground text-center">
-                {progress}{'%'} - Creating video with subtitles...
-              </p>
-            </div>
-          ) : (
-            videoUrl && (
-              <div className="aspect-video w-full bg-black rounded-lg overflow-hidden">
-                <video
-                  src={videoUrl}
-                  controls
-                  className="w-full h-full"
-                  onError={(e) => console.error("[Video Player] Error loading video:", e)}
-                >
-                  Your browser does not support the video tag.
-                </video>
-              </div>
-            )
-          )}
         </Card>
       )}
     </div>

@@ -1,0 +1,31 @@
+{
+  "name": "render-video",
+  "version": "1.0.0",
+  "description": "Cloud function for rendering videos with Remotion",
+  "main": "dist/index.js",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "copy-tsx": "mkdir -p dist/remotion && cp src/remotion/*.tsx dist/remotion/",
+    "build": "npm run clean && tsc && npm run copy-tsx",
+    "start": "npm run build && functions-framework --target=render-video --signature-type=http",
+    "watch": "concurrently \"tsc -w\" \"nodemon --watch ./dist/ --exec functions-framework --target=render-video\"",
+    "test": "node dist/test.js",
+    "deploy": "gcloud functions deploy render-video --runtime nodejs20 --trigger-http --allow-unauthenticated --memory=4096MB --timeout=540s"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.3.0",
+    "@google-cloud/storage": "^7.7.0",
+    "@remotion/bundler": "^4.0.0",
+    "@remotion/renderer": "^4.0.0",
+    "remotion": "^4.0.0",
+    "react": "^18.2.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.0",
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.2",
+    "typescript": "^5.3.2"
+  }
+}

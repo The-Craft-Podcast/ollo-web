@@ -38,6 +38,17 @@ next-env.d.ts
 # firebase
 firebase-cred.json
 
+# Node
+node_modules
+
 # secrets
 .env
 .env.local
+
+# videos
+/public/videos
+
+# Temporary files
+/temp
+/public/temp
+!/public/videos/.gitkeep
