@@ -32,7 +32,7 @@ export function FFmpegProcessor({ onProcessed, onError }: FFmpegProcessorProps) 
 
     setIsProcessing(true);
     try {
-      const url = await ffmpegService.processVideo(file);
+      const url = await ffmpegService.createVideoWithSubtitles(file, []);
       onProcessed?.(url);
     } catch (error) {
       console.error('Error processing video:', error);

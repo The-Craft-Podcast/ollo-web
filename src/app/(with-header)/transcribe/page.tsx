@@ -9,11 +9,10 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Toaster } from "@/components/ui/toaster";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Loader2, Copy, ChevronDown, ChevronUp } from "lucide-react";
 import { ffmpegService, VideoFormats } from '@/services/ffmpeg';
 
-interface TranscriptSegment {
+export interface TranscriptSegment {
   id: number;
   start: number;
   end: number;
@@ -22,16 +21,6 @@ interface TranscriptSegment {
   compression_ratio?: number;
   no_speech_prob?: number;
   temperature?: number;
-}
-
-interface FFmpegLogEvent {
-  message: string;
-  type?: string;
-}
-
-interface FFmpegProgressEvent {
-  progress: number;
-  time: number;
 }
 
 export default function TranscribePage() {
@@ -43,9 +32,7 @@ export default function TranscribePage() {
   const [isCreatingVideo, setIsCreatingVideo] = useState(false);
   const [progress, setProgress] = useState(0);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [videoFormat, setVideoFormat] = useState(VideoFormats.LANDSCAPE);
-  const [ready, setReady] = useState(false);
-  const [videoSrc, setVideoSrc] = useState('');
+  const [videoFormat, setVideoFormat] = useState<typeof VideoFormats[keyof typeof VideoFormats]>(VideoFormats.LANDSCAPE);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -272,13 +259,13 @@ export default function TranscribePage() {
                   <Label>Video Format</Label>
                   <div className="flex space-x-2">
                     <Button
-                      variant={videoFormat === VideoFormats.LANDSCAPE ? "default" : "outline"}
+                      variant={Object.is(videoFormat, VideoFormats.LANDSCAPE) ? "default" : "outline"}
                       onClick={() => setVideoFormat(VideoFormats.LANDSCAPE)}
                     >
                       Landscape (16:9)
                     </Button>
                     <Button
-                      variant={videoFormat === VideoFormats.TIKTOK ? "default" : "outline"}
+                      variant={Object.is(videoFormat, VideoFormats.TIKTOK) ? "default" : "outline"}
                       onClick={() => setVideoFormat(VideoFormats.TIKTOK)}
                     >
                       TikTok (9:16)

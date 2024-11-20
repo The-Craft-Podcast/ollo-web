@@ -2,16 +2,17 @@
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { toBlobURL, fetchFile } from '@ffmpeg/util';
+import { TranscriptSegment } from '@/app/(with-header)/transcribe/page';
 
 interface VideoFormat {
   width: number;
   height: number;
-  name: string;
+  name: 'landscape' | 'tiktok';
 }
 
 export const VideoFormats = {
-  LANDSCAPE: { width: 1920, height: 1080, name: 'landscape' },
-  TIKTOK: { width: 1080, height: 1920, name: 'tiktok' }
+  LANDSCAPE: { width: 1920, height: 1080, name: 'landscape' as const },
+  TIKTOK: { width: 1080, height: 1920, name: 'tiktok' as const }
 } as const;
 
 class FFmpegService {
@@ -78,7 +79,7 @@ class FFmpegService {
 
   async createVideoWithSubtitles(
     audioFile: File, 
-    transcriptSegments: any[], 
+    transcriptSegments: TranscriptSegment[], 
     onProgress?: (progress: number) => void,
     format: VideoFormat = VideoFormats.LANDSCAPE
   ) {
@@ -223,18 +224,12 @@ class FFmpegService {
 
       // Read output file
       console.log('FFmpegService: Reading output file');
-      let output;
-      try {
-        output = await this.ffmpeg.readFile('output.mp4');
-      } catch (error) {
-        console.error('FFmpegService: Error reading output file:', error);
-        throw error;
-      }
+      const output = await this.ffmpeg.readFile('output.mp4');
       
-      // Create URL
       console.log('FFmpegService: Creating output URL');
+      const data = output instanceof Uint8Array ? output : new TextEncoder().encode(output);
       const url = URL.createObjectURL(
-        new Blob([output.buffer], { type: 'video/mp4' })
+        new Blob([data], { type: 'video/mp4' })
       );
       
       console.log('FFmpegService: Video creation completed successfully');
