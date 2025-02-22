@@ -6,10 +6,10 @@ export default function Footer() {
             <div className="container flex justify-between items-center">
                 <p className="text-sm text-muted-foreground">Copyright &copy; OllO Audio 2024</p>
                 <div className="flex gap-4">
-                    <Link href="#" className="text-sm hover:underline" prefetch={false}>
+                    <Link href="/terms" className="text-sm hover:underline" prefetch={false}>
                         Terms & Conditions
                     </Link>
-                    <Link href="#" className="text-sm hover:underline" prefetch={false}>
+                    <Link href="/privacy" className="text-sm hover:underline" prefetch={false}>
                         Privacy Policy
                     </Link>
                 </div>
