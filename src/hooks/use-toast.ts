@@ -18,21 +18,12 @@ type ToasterToast = ToastProps & {
   action?: ToastActionElement
 }
 
-// Remove the unused actionTypes constant
-// const actionTypes = {
-//   ADD_TOAST: "ADD_TOAST",
-//   UPDATE_TOAST: "UPDATE_TOAST",
-//   DISMISS_TOAST: "DISMISS_TOAST",
-//   REMOVE_TOAST: "REMOVE_TOAST",
-// } as const
-
 let count = 0
 
 function genId() {
   count = (count + 1) % Number.MAX_SAFE_INTEGER
   return count.toString()
 }
-
 
 type Action =
   | {
@@ -170,7 +161,7 @@ function toast({ ...props }: Toast) {
   }
 }
 
-function useToast() {
+export function useToast() {
   const [state, setState] = React.useState<State>(memoryState)
 
   React.useEffect(() => {
@@ -181,7 +172,7 @@ function useToast() {
         listeners.splice(index, 1)
       }
     }
-  }, [state])
+  }, [])
 
   return {
     ...state,
@@ -190,4 +181,4 @@ function useToast() {
   }
 }
 
-export { useToast, toast }
+export { toast }

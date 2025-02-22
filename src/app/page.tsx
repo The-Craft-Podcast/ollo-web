@@ -23,6 +23,10 @@ export default function Home() {
           <Button asChild>
             <a href="/render-video">
               Generate Video
+          </Button>
+          <Button asChild>
+            <a href="/transcribe">
+              Transcribe Audio
             </a>
           </Button>
         </div>
