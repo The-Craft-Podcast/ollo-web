@@ -33,6 +33,17 @@ import { fetchClips } from "@/utils/fetchClips"
 import { saveAs } from 'file-saver';
 import Image from 'next/image';
 
+const formatIndexedTime = (timestamp: string | undefined) => {
+  if (!timestamp) return 'Not indexed';
+  return new Date(timestamp).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
 export function SearchComponent() {
   const [searchTerm, setSearchTerm] = useState("")
   const [topK, setTopK] = useState("10")
@@ -231,7 +242,12 @@ export function SearchComponent() {
             />
             <div className="flex-1">
               <h3 className="text-lg font-semibold">{clip.clipTitle}</h3>
-              <p className="text-sm text-muted-foreground">{clip.podcastShowTitle}</p>
+              <div className="flex justify-between items-center">
+                <p className="text-sm text-muted-foreground">{clip.podcastShowTitle}</p>
+                <p className="text-sm text-muted-foreground italic">
+                  {formatIndexedTime(clip.indexed_timestamp)}
+                </p>
+              </div>
               <p className="text-sm mt-2 line-clamp-2">{clip.clipSummary}</p>
             </div>
           </div>

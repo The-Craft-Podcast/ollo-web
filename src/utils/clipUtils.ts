@@ -1,3 +1,5 @@
+// This function fetches clips from the firestore database
+
 import { db } from './firebase-admin';
 import { Digest } from '@/types/digest';
 

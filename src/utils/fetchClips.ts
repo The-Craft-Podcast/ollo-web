@@ -1,3 +1,5 @@
+// This function fetches clips from the server
+
 import { Digest } from '../types/digest';
 
 export const fetchClips = async (inputText: string, top_k: string = "10", alpha: string = "0.2"): Promise<Digest[]> => {
@@ -24,7 +26,14 @@ export const fetchClips = async (inputText: string, top_k: string = "10", alpha:
             if (!Array.isArray(clips)) {
                 throw new Error('Invalid response format');
             }
-            return clips;
+
+            // Sort clips by indexed_timestamp in descending order
+            // Note: Clips without timestamp will be placed at the end
+            return clips.sort((a, b) => {
+                if (!a.indexed_timestamp) return 1;
+                if (!b.indexed_timestamp) return -1;
+                return new Date(b.indexed_timestamp).getTime() - new Date(a.indexed_timestamp).getTime();
+            });
         } catch (error) {
             retries++;
             if (retries === maxRetries) {
